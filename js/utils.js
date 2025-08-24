@@ -349,6 +349,12 @@ function restoreSeatMap() {
   CONFIG.seatMap.forEach((seat) => {
     const wrapper = $(`.student-info.pos-${seat.x}-${seat.y}`);
     if (wrapper.length === 0) return;
+
+    wrapper.removeClass('priority');
+    if (seat.isPriority) {
+      wrapper.addClass('priority');
+    }
+
     const idDiv = wrapper.find('.id');
     const furiganaDiv = wrapper.find('.furigana');
     const nameDiv = wrapper.find('.name');
@@ -402,6 +408,7 @@ function assignMembersToSeats(
           number: m.number,
           name: m.name,
           furigana: m.furigana,
+          isPriority: isPriority,
         });
       }
     });
@@ -416,22 +423,36 @@ function shuffleMembers() {
   const priorityInput = $('#front-priority-numbers').val();
   const lowerCasePriorityInput = priorityInput.toLowerCase();
 
-  const priorityStudentIdentifiers = Array.from(
-    new Set(
-      lowerCasePriorityInput
-        .split(',')
-        .map((item) => item.trim())
-        .filter((item) => item && item.includes('-'))
-    )
-  );
+  let inputItems = lowerCasePriorityInput
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item);
+
+  const priorityStudentIdentifiers = new Set();
+
+  inputItems.forEach((item) => {
+    if (item.includes('-')) {
+      // クラス-番号の形式の場合はそのまま追加
+      priorityStudentIdentifiers.add(item);
+    } else {
+      // 番号のみの場合は、既存のメンバーから該当する番号を持つ全てのクラス-番号を追加
+      CONFIG.members.forEach((member) => {
+        if (member.number.toString().toLowerCase() === item) {
+          priorityStudentIdentifiers.add(
+            `${member.class}-${member.number}`.toLowerCase()
+          );
+        }
+      });
+    }
+  });
 
   const priorityMembers = CONFIG.members.filter((member) => {
     const memberIdentifier = `${member.class}-${member.number}`.toLowerCase();
-    return priorityStudentIdentifiers.includes(memberIdentifier);
+    return priorityStudentIdentifiers.has(memberIdentifier);
   });
   const nonPriorityMembers = CONFIG.members.filter((member) => {
     const memberIdentifier = `${member.class}-${member.number}`.toLowerCase();
-    return !priorityStudentIdentifiers.includes(memberIdentifier);
+    return !priorityStudentIdentifiers.has(memberIdentifier);
   });
 
   CONFIG.seatMap = [];
@@ -472,16 +493,28 @@ function swapStudents(
         number: seatMapEntry1.number,
         name: seatMapEntry1.name,
         furigana: seatMapEntry1.furigana,
+        isPriority: seatMapEntry1.isPriority,
       }
-    : { class: '', number: '', name: '', furigana: '' };
+    : { class: '', number: '', name: '', furigana: '', isPriority: false };
   const studentInfo2 = seatMapEntry2
     ? {
         class: seatMapEntry2.class,
         number: seatMapEntry2.number,
         name: seatMapEntry2.name,
         furigana: seatMapEntry2.furigana,
+        isPriority: seatMapEntry2.isPriority,
       }
-    : { class: '', number: '', name: '', furigana: '' };
+    : { class: '', number: '', name: '', furigana: '', isPriority: false };
+
+  $seatElement1.removeClass('priority');
+  $seatElement2.removeClass('priority');
+
+  if (studentInfo2.isPriority) {
+    $seatElement1.addClass('priority');
+  }
+  if (studentInfo1.isPriority) {
+    $seatElement2.addClass('priority');
+  }
 
   $seatElement1
     .find('.id')
@@ -560,6 +593,10 @@ function swapStudents(
     [seatMapEntry1.furigana, seatMapEntry2.furigana] = [
       seatMapEntry2.furigana,
       seatMapEntry1.furigana,
+    ];
+    [seatMapEntry1.isPriority, seatMapEntry2.isPriority] = [
+      seatMapEntry2.isPriority,
+      seatMapEntry1.isPriority,
     ];
   } else if (seatMapEntry1 && !seatMapEntry2) {
     const index1 = seatMap.indexOf(seatMapEntry1);

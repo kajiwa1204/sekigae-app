@@ -244,5 +244,10 @@ $(document).on('click', function () {
   selectedSeat = null;
 });
 
+$('#class-group-toggle').on('change', function() {
+  CONFIG.classGrouping = $(this).prop('checked');
+  saveLocalStorage('classGrouping', CONFIG.classGrouping);
+});
+
 // TODO: Implement auto button function
 $('#auto').on('click', function () {});
