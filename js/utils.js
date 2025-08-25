@@ -8,6 +8,7 @@ let CONFIG = {
   mode: -1,
   members: [],
   seatMap: [],
+  classGrouping: false,
 };
 
 function saveLocalStorage(key, value) {
@@ -49,7 +50,9 @@ function loadConfig() {
     try {
       const obj = JSON.parse(configPath);
       if (obj && typeof obj === 'object') {
-        CONFIG = obj;
+        Object.keys(obj).forEach((key) => {
+          CONFIG[key] = obj[key];
+        });
       }
     } catch (ignored) {}
   }
@@ -184,8 +187,6 @@ function createSeats($container, seatRows, front) {
   const spaceWidth = STUDENT_INFO_STYLE.width / 64;
   const spaceHeight = STUDENT_INFO_STYLE.width / 8;
   const rowsLength = seatRows.length;
-
-  let currentY = 0;
 
   seatRows.forEach((row, y) => {
     const rowDiv = $('<div>')
@@ -351,6 +352,10 @@ function restoreSeatMap() {
     if (wrapper.length === 0) return;
 
     wrapper.removeClass('priority');
+    wrapper.removeClass((index, className) => {
+      return (className.match(/\bclass-\S+/g) || []).join(' ');
+    });
+    wrapper.addClass(`class-${seat.class}`);
     if (seat.isPriority) {
       wrapper.addClass('priority');
     }
@@ -386,6 +391,10 @@ function assignMembersToSeats(
       if (seat) {
         const wrapper = $(`.student-info.pos-${seat.x}-${seat.y}`);
         wrapper.removeClass('priority');
+        wrapper.removeClass((index, className) => {
+          return (className.match(/\bclass-\S+/g) || []).join(' ');
+        });
+        wrapper.addClass(`class-${m.class}`);
         if (isPriority) {
           wrapper.addClass('priority');
         }
@@ -457,15 +466,311 @@ function shuffleMembers() {
 
   CONFIG.seatMap = [];
 
-  assignMembersToSeats(priorityMembers, optimalSeats, 0, true);
-  assignMembersToSeats(
-    nonPriorityMembers,
-    optimalSeats,
-    priorityMembers.length,
-    false
-  );
+  if (CONFIG.classGrouping) {
+    assignMembersByClassWithPriority(
+      priorityMembers,
+      nonPriorityMembers,
+      optimalSeats
+    );
+  } else {
+    assignMembersToSeats(priorityMembers, optimalSeats, 0, true);
+
+    const remainingSeats = optimalSeats.slice(priorityMembers.length);
+    let remainingNonPriorityMembers = [...nonPriorityMembers];
+
+    assignMembersToSeats(remainingNonPriorityMembers, remainingSeats, 0, false);
+  }
 
   saveLocalStorage('seatMap', CONFIG.seatMap);
+}
+
+function assignMembersByClassWithPriority(
+  priorityMembers,
+  nonPriorityMembers,
+  optimalSeats
+) {
+  const priorityClassMemberMap = new Map();
+  priorityMembers.forEach((member) => {
+    if (!priorityClassMemberMap.has(member.class)) {
+      priorityClassMemberMap.set(member.class, []);
+    }
+    priorityClassMemberMap.get(member.class).push(member);
+  });
+
+  const sortedPriorityClasses = Array.from(priorityClassMemberMap.keys()).sort(
+    (a, b) => a.localeCompare(b, 'ja', { numeric: true })
+  );
+
+  const prioritySeats = optimalSeats.slice(0, priorityMembers.length);
+
+  const seatsForPriorityGrouping = [...prioritySeats].sort((a, b) => {
+    // y座標が大きい順（後ろから前へ）、同じy座標ならx座標が小さい順（左から右へ）
+    if (a.y !== b.y) return b.y - a.y;
+    return a.x - b.x;
+  });
+
+  const prioritySeatsByColumn = new Map();
+  seatsForPriorityGrouping.forEach((seat) => {
+    if (!prioritySeatsByColumn.has(seat.x)) {
+      prioritySeatsByColumn.set(seat.x, []);
+    }
+    prioritySeatsByColumn.get(seat.x).push(seat);
+  });
+
+  const sortedPriorityColumns = Array.from(prioritySeatsByColumn.keys()).sort(
+    (a, b) => a - b
+  );
+
+  const priorityClassAssignments = sortedPriorityClasses.map((className) => {
+    const classMembers = priorityClassMemberMap.get(className);
+    const shuffledMembers = classMembers.sort(() => Math.random() - 0.5);
+
+    return {
+      className,
+      members: shuffledMembers,
+    };
+  });
+
+  let currentPriorityClassIndex = 0;
+  let currentPriorityMemberIndexInClass = 0;
+
+  sortedPriorityColumns.forEach((columnX) => {
+    const columnSeats = prioritySeatsByColumn.get(columnX);
+
+    columnSeats.forEach((seat) => {
+      if (currentPriorityClassIndex < priorityClassAssignments.length) {
+        const currentClass =
+          priorityClassAssignments[currentPriorityClassIndex];
+
+        if (currentPriorityMemberIndexInClass < currentClass.members.length) {
+          const member =
+            currentClass.members[currentPriorityMemberIndexInClass];
+
+          assignMemberToSeat(member, seat, true);
+          currentPriorityMemberIndexInClass++;
+
+          if (
+            currentPriorityMemberIndexInClass >= currentClass.members.length
+          ) {
+            currentPriorityClassIndex++;
+            currentPriorityMemberIndexInClass = 0;
+          }
+        }
+      }
+    });
+  });
+
+  const remainingSeats = optimalSeats.slice(priorityMembers.length);
+  let remainingNonPriorityMembers = [...nonPriorityMembers];
+
+  if (remainingNonPriorityMembers.length > 0 && remainingSeats.length > 0) {
+    assignRemainingMembersByClass(remainingNonPriorityMembers, remainingSeats);
+  }
+}
+
+// 残りのメンバーをクラス別に配置する関数
+function assignRemainingMembersByClass(members, seats) {
+  // メンバーをクラス別にグループ化
+  const classMemberMap = new Map();
+  members.forEach((member) => {
+    if (!classMemberMap.has(member.class)) {
+      classMemberMap.set(member.class, []);
+    }
+    classMemberMap.get(member.class).push(member);
+  });
+
+  // クラス名でソート（自然順序）
+  const sortedClasses = Array.from(classMemberMap.keys()).sort((a, b) =>
+    a.localeCompare(b, 'ja', { numeric: true })
+  );
+
+  // 席を左後ろを基準に前右の順で並び替え
+  const seatsForClassGrouping = [...seats].sort((a, b) => {
+    // y座標が大きい順（後ろから前へ）、同じy座標ならx座標が小さい順（左から右へ）
+    if (a.y !== b.y) return b.y - a.y;
+    return a.x - b.x;
+  });
+
+  // 席をx座標（列）ごとにグループ化
+  const seatsByColumn = new Map();
+  seatsForClassGrouping.forEach((seat) => {
+    if (!seatsByColumn.has(seat.x)) {
+      seatsByColumn.set(seat.x, []);
+    }
+    seatsByColumn.get(seat.x).push(seat);
+  });
+
+  // 列を左から右の順でソート
+  const sortedColumns = Array.from(seatsByColumn.keys()).sort((a, b) => a - b);
+
+  // 各クラスのメンバーをシャッフル
+  const classAssignments = sortedClasses.map((className) => {
+    const classMembers = classMemberMap.get(className);
+    const shuffledMembers = classMembers.sort(() => Math.random() - 0.5);
+
+    return {
+      className,
+      members: shuffledMembers,
+    };
+  });
+
+  // 列ごとにクラスを配置
+  let currentClassIndex = 0;
+  let currentMemberIndexInClass = 0;
+
+  sortedColumns.forEach((columnX) => {
+    const columnSeats = seatsByColumn.get(columnX);
+
+    columnSeats.forEach((seat) => {
+      if (currentClassIndex < classAssignments.length) {
+        const currentClass = classAssignments[currentClassIndex];
+
+        if (currentMemberIndexInClass < currentClass.members.length) {
+          const member = currentClass.members[currentMemberIndexInClass];
+
+          assignMemberToSeat(member, seat, false);
+          currentMemberIndexInClass++;
+
+          // このクラスのメンバーが全て配置されたら次のクラスへ
+          if (currentMemberIndexInClass >= currentClass.members.length) {
+            currentClassIndex++;
+            currentMemberIndexInClass = 0;
+          }
+        }
+      }
+    });
+  });
+}
+
+function assignMembersByClass(
+  priorityMembers,
+  nonPriorityMembers,
+  optimalSeats
+) {
+  // 全メンバーをクラス別にグループ化
+  const allMembers = [...priorityMembers, ...nonPriorityMembers];
+  const classMemberMap = new Map();
+
+  allMembers.forEach((member) => {
+    if (!classMemberMap.has(member.class)) {
+      classMemberMap.set(member.class, []);
+    }
+    classMemberMap.get(member.class).push(member);
+  });
+
+  // クラス名でソート（自然順序）
+  const sortedClasses = Array.from(classMemberMap.keys()).sort((a, b) =>
+    a.localeCompare(b, 'ja', { numeric: true })
+  );
+
+  // 席を左後ろを基準に前右の順で並び替え
+  const seatsForClassGrouping = [...optimalSeats].sort((a, b) => {
+    // y座標が大きい順（後ろから前へ）、同じy座標ならx座標が小さい順（左から右へ）
+    if (a.y !== b.y) return b.y - a.y;
+    return a.x - b.x;
+  });
+
+  // 席をx座標（列）ごとにグループ化
+  const seatsByColumn = new Map();
+  seatsForClassGrouping.forEach((seat) => {
+    if (!seatsByColumn.has(seat.x)) {
+      seatsByColumn.set(seat.x, []);
+    }
+    seatsByColumn.get(seat.x).push(seat);
+  });
+
+  // 列を左から右の順でソート
+  const sortedColumns = Array.from(seatsByColumn.keys()).sort((a, b) => a - b);
+
+  // 各クラスのメンバーを優先度別に分ける
+  const classAssignments = sortedClasses.map((className) => {
+    const classMembers = classMemberMap.get(className);
+    const classPriorityMembers = classMembers.filter((member) =>
+      priorityMembers.some(
+        (pm) => pm.class === member.class && pm.number === member.number
+      )
+    );
+    const classNonPriorityMembers = classMembers.filter(
+      (member) =>
+        !priorityMembers.some(
+          (pm) => pm.class === member.class && pm.number === member.number
+        )
+    );
+
+    // クラス内でシャッフル
+    const shuffledMembers = [
+      ...classPriorityMembers.sort(() => Math.random() - 0.5),
+      ...classNonPriorityMembers.sort(() => Math.random() - 0.5),
+    ];
+
+    return {
+      className,
+      members: shuffledMembers,
+      priorityCount: classPriorityMembers.length,
+    };
+  });
+
+  // 列ごとにクラスを配置
+  let currentClassIndex = 0;
+  let currentMemberIndexInClass = 0;
+
+  sortedColumns.forEach((columnX) => {
+    const columnSeats = seatsByColumn.get(columnX);
+
+    columnSeats.forEach((seat) => {
+      if (currentClassIndex < classAssignments.length) {
+        const currentClass = classAssignments[currentClassIndex];
+
+        if (currentMemberIndexInClass < currentClass.members.length) {
+          const member = currentClass.members[currentMemberIndexInClass];
+          const isPriority =
+            currentMemberIndexInClass < currentClass.priorityCount;
+
+          assignMemberToSeat(member, seat, isPriority);
+          currentMemberIndexInClass++;
+
+          // このクラスのメンバーが全て配置されたら次のクラスへ
+          if (currentMemberIndexInClass >= currentClass.members.length) {
+            currentClassIndex++;
+            currentMemberIndexInClass = 0;
+          }
+        }
+      }
+    });
+  });
+}
+
+function assignMemberToSeat(member, seat, isPriority) {
+  const wrapper = $(`.student-info.pos-${seat.x}-${seat.y}`);
+  wrapper.removeClass('priority');
+  wrapper.removeClass((index, className) => {
+    return (className.match(/\bclass-\S+/g) || []).join(' ');
+  });
+  wrapper.addClass(`class-${member.class}`);
+  if (isPriority) {
+    wrapper.addClass('priority');
+  }
+  const idDiv = wrapper.find('.id');
+  const furiganaDiv = wrapper.find('.furigana');
+  const nameDiv = wrapper.find('.name');
+
+  idDiv.text(`${member.class}-${member.number}`);
+  furiganaDiv.text(`${member.furigana}`);
+  nameDiv.text(`${member.name}`);
+
+  fitTextToBox(idDiv);
+  fitTextToBox(furiganaDiv);
+  fitTextToBox(nameDiv);
+
+  CONFIG.seatMap.push({
+    x: seat.x,
+    y: seat.y,
+    class: member.class,
+    number: member.number,
+    name: member.name,
+    furigana: member.furigana,
+    isPriority: isPriority,
+  });
 }
 
 function deleteSeatMap() {
@@ -474,6 +779,10 @@ function deleteSeatMap() {
   $('.student-info .id').text('');
   $('.student-info .furigana').text('');
   $('.student-info .name').text('');
+  $('.student-info').removeClass('priority');
+  $('.student-info').removeClass((index, className) => {
+    return (className.match(/\bclass-\S+/g) || []).join(' ');
+  });
 }
 
 function swapStudents(
@@ -508,6 +817,19 @@ function swapStudents(
 
   $seatElement1.removeClass('priority');
   $seatElement2.removeClass('priority');
+  $seatElement1.removeClass((index, className) => {
+    return (className.match(/\bclass-\S+/g) || []).join(' ');
+  });
+  $seatElement2.removeClass((index, className) => {
+    return (className.match(/\bclass-\S+/g) || []).join(' ');
+  });
+
+  if (studentInfo2.class) {
+    $seatElement1.addClass(`class-${studentInfo2.class}`);
+  }
+  if (studentInfo1.class) {
+    $seatElement2.addClass(`class-${studentInfo1.class}`);
+  }
 
   if (studentInfo2.isPriority) {
     $seatElement1.addClass('priority');

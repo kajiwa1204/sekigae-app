@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>席替えアプリ</title>
-    <script src="https://cdn.tailwindcss.com" defer></script>
+    <!-- <script src="https://cdn.tailwindcss.com" defer></script>
     <script
       src="https://code.jquery.com/jquery-3.7.1.min.js"
       integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
@@ -16,7 +16,10 @@
       integrity="sha256-AlTido85uXPlSyyaZNsjJXeCs07eSv3r43kyCVc8ChI="
       crossorigin="anonymous"
       defer
-    ></script>
+    ></script> -->
+    <script src="libs/tailwindcss-3.4.17.js"></script>
+    <script src="libs/jquery-3.7.1.min.js"></script>
+    <script src="libs/jquery-ui-1.14.1.min.js"></script>
     <script src="js/variables.js"></script>
     <script src="js/utils.js"></script>
     <script src="js/main.js" defer></script>
@@ -52,9 +55,29 @@
         background-color: #ffe3ec !important;
       }
 
+      .class-IH12A {
+        border: 2px solid #d1e7dd !important;
+      }
+
+      .class-IH12B {
+        border: 2px solid #f8d7da !important;
+      }
+
+      .class-IA12A {
+        border: 2px solid #f1c40f !important;
+      }
+
+      .selected-seat {
+        border-color: red !important;
+      }
+
       @media print {
         @page {
           margin: 0 !important;
+        }
+
+        .student-info {
+          border: 1px solid black !important;
         }
 
         .selected-seat {

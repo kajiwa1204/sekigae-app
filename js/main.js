@@ -8,7 +8,7 @@ $(function () {
   loadFrontPriorityNumbers();
   loadMode();
   loadMembers();
-  restoreSeatMap();
+  loadClassGroupToggle();
   $('.loading').remove();
 });
 
@@ -80,6 +80,7 @@ $('#mode-btn').on('click', function () {
 });
 
 $('#room-select').on('change', function () {
+  const prevRoom = getLocalStorage('selectedRoom');
   const room = $(this).val();
 
   if (!SEATS_TEMPLATE) return;
@@ -98,6 +99,13 @@ $('#room-select').on('change', function () {
     alert(
       `名簿の人数(${CONFIG.members.length})が教室の席数(${capacity})を超えています。`
     );
+    $(this).val(prevRoom);
+    return;
+  }
+
+  if (prevRoom && prevRoom !== room) {
+    localStorage.removeItem('seatMap');
+    CONFIG.seatMap = [];
   }
 
   $('.room').text(room);
@@ -122,6 +130,8 @@ $('#room-select').on('change', function () {
     createSeats($seatMapFront, CLASS_LOOM.seat, true);
     createSeats($seatMapBack, reversedSeat, false);
     createSeats($settingsSeatMap, reversedSeat, false);
+
+    restoreSeatMap();
   }
 });
 
@@ -244,10 +254,211 @@ $(document).on('click', function () {
   selectedSeat = null;
 });
 
-$('#class-group-toggle').on('change', function() {
+$('#class-group-toggle').on('change', function () {
   CONFIG.classGrouping = $(this).prop('checked');
   saveLocalStorage('classGrouping', CONFIG.classGrouping);
 });
+
+function loadClassGroupToggle() {
+  const classGrouping = getLocalStorage('classGrouping');
+  if (classGrouping !== '' && classGrouping !== undefined) {
+    CONFIG.classGrouping = classGrouping;
+    $('#class-group-toggle').prop('checked', classGrouping);
+  }
+}
+
+function exportConfigs() {
+  try {
+    const userPrefix = prompt('ファイル名のプレフィックスを入力してください:');
+
+    // 現在の日時を取得してファイル名を作成
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+
+    let filename;
+    if (userPrefix && userPrefix.trim() !== '') {
+      // 文字列が入力された場合: "文字列-yyyymmdd-hhmmss.json"
+      const sanitizedPrefix = userPrefix.trim().replace(/[<>:"/\\|?*]/g, '_'); // 無効な文字を置換
+      filename = `${sanitizedPrefix}-${year}${month}${day}-${hours}${minutes}${seconds}.json`;
+    } else {
+      // 空欄の場合: "yyyymmdd-hhmmss.json"
+      filename = `${year}${month}${day}-${hours}${minutes}${seconds}.json`;
+    }
+
+    const configData = localStorage.getItem('kajiwa.sekigae.config');
+    let exportData = {};
+
+    if (configData) {
+      try {
+        exportData = JSON.parse(configData);
+      } catch (parseError) {
+        console.error('Config parse error:', parseError);
+        exportData = { error: 'Failed to parse config data' };
+      }
+    } else {
+      exportData = { error: 'No config data found' };
+    }
+
+    // JSONとして整形
+    const jsonString = JSON.stringify(exportData);
+
+    // Blobを作成してダウンロード
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+
+    // ダウンロードリンクを作成
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    // URLオブジェクトをクリーンアップ
+    URL.revokeObjectURL(url);
+
+    console.log(`LocalStorage exported as ${filename}`);
+    return true;
+  } catch (error) {
+    console.error('Export failed:', error);
+    return false;
+  }
+}
+
+// JSONファイルからconfigをインポートする関数
+function importConfigs() {
+  return new Promise((resolve, reject) => {
+    try {
+      // ファイル選択用のinput要素を作成
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+
+      input.onchange = function (event) {
+        const file = event.target.files[0];
+        if (!file) {
+          reject(new Error('No file selected'));
+          return;
+        }
+
+        // ファイルを読み込む
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          try {
+            const jsonData = JSON.parse(e.target.result);
+
+            // CONFIGの有効なキーを動的に取得
+            const validConfigKeys = Object.keys(CONFIG);
+
+            // JSONに無効なキーが含まれていないかチェック
+            const jsonKeys = Object.keys(jsonData);
+            const invalidKeys = jsonKeys.filter(
+              (key) => !validConfigKeys.includes(key)
+            );
+
+            if (invalidKeys.length > 0) {
+              alert(
+                `無効なキーが含まれています: ${invalidKeys.join(
+                  ', '
+                )}\nインポートを中止します。`
+              );
+              reject(
+                new Error(`Invalid keys found: ${invalidKeys.join(', ')}`)
+              );
+              return;
+            }
+
+            // CONFIGオブジェクトを更新
+            Object.keys(jsonData).forEach((key) => {
+              CONFIG[key] = jsonData[key];
+            });
+
+            // localStorageに保存
+            localStorage.setItem(
+              'kajiwa.sekigae.config',
+              JSON.stringify(CONFIG)
+            );
+
+            console.log('Config imported successfully:', CONFIG);
+
+            // UIを更新
+            updateUIAfterImport();
+
+            resolve(CONFIG);
+          } catch (parseError) {
+            console.error('JSON parse error:', parseError);
+            reject(new Error('Invalid JSON file'));
+          }
+        };
+
+        reader.onerror = function () {
+          reject(new Error('File read error'));
+        };
+
+        reader.readAsText(file);
+      };
+
+      // ファイル選択ダイアログを開く
+      input.click();
+    } catch (error) {
+      console.error('Import failed:', error);
+      reject(error);
+    }
+  });
+}
+
+// インポート後にUIを更新する関数
+function updateUIAfterImport() {
+  try {
+    // メンバーリストを更新
+    $('#members').empty();
+    if (CONFIG.members && Array.isArray(CONFIG.members)) {
+      CONFIG.members.forEach((member) => {
+        addMemberRow(member);
+      });
+    }
+
+    // トグル状態を更新
+    if (CONFIG.classGrouping !== undefined) {
+      $('#class-group-toggle').prop('checked', CONFIG.classGrouping);
+    }
+
+    // 教室選択を更新
+    if (CONFIG.selectedRoom) {
+      $('#room-select').val(CONFIG.selectedRoom);
+      $('#room-select').trigger('change');
+    }
+
+    // 前方希望者番号を更新
+    if (CONFIG.frontPriorityNumbers) {
+      $('#front-priority-numbers').val(CONFIG.frontPriorityNumbers);
+    }
+
+    // 説明文を更新
+    if (CONFIG.description) {
+      if (CONFIG.description.main) {
+        $('.front .desc input.main').val(CONFIG.description.main);
+        $('.back .desc .main').text(CONFIG.description.main);
+      }
+      if (CONFIG.description.sub) {
+        $('.front .desc input.sub').val(CONFIG.description.sub);
+        $('.back .desc .sub').text(CONFIG.description.sub);
+      }
+    }
+
+    alert('設定のインポートが完了しました。');
+  } catch (error) {
+    console.error('UI update failed:', error);
+    alert(
+      '設定は読み込まれましたが、UIの更新に失敗しました。ページを再読み込みしてください。'
+    );
+  }
+}
 
 // TODO: Implement auto button function
 $('#auto').on('click', function () {});
